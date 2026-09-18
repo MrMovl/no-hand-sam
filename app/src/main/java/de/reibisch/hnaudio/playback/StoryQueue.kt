@@ -30,6 +30,8 @@ import java.io.File
 import java.io.IOException
 import kotlin.math.roundToInt
 
+data class QueueConfig(val storyCount: Int, val includeAskShow: Boolean, val heard: Set<Long>)
+
 private class StoryText(val extraction: Extraction, val summary: String?)
 
 /**
@@ -46,6 +48,8 @@ class StoryQueue(
     private val speech: SpeechRenderer,
     private val ttsFiles: TtsFiles,
     private val speechRate: suspend () -> Float,
+    private val config: suspend () -> QueueConfig,
+    private val onStoryStarted: (Story) -> Unit,
 ) {
     private var stories: List<Story> = emptyList()
     private val extractions = mutableMapOf<Int, Extraction>()
@@ -80,6 +84,7 @@ class StoryQueue(
     private val listener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             mediaItem?.storyIndex?.takeIf { it >= 0 }?.let { currentStory.value = it }
+            if (mediaItem?.kind == ItemKind.SUMMARY) stories.getOrNull(mediaItem.storyIndex)?.let(onStoryStarted)
             positionTick.value++
             // The listener only moves forward, so everything before the current item is done.
             scope.launch { removeRange(0, player.currentMediaItemIndex) }
@@ -108,10 +113,34 @@ class StoryQueue(
         player.playWhenReady = true
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
         prefetchJob = scope.launch { prefetch() }
+        scope.launch { playIntro() }
+    }
+
+    /** The story the listener is on, for "save for later". */
+    val currentStoryOrNull: Story?
+        get() = player.currentMediaItem?.storyIndex?.let { stories.getOrNull(it) }
+
+    /** Immediate feedback that play registered, filling the wait for the first story. */
+    private suspend fun playIntro() {
+        val files = try {
+            speech.render("Loading the Hacker News front page.")
+        } catch (e: SpeechException) {
+            return
+        }
+        // Pointless once a story is already queued; it would play after it.
+        if (player.mediaItemCount > 0 || !isStarted) {
+            files.forEach(ttsFiles::delete)
+            return
+        }
+        append(files.map { queueItem(it, -1, ItemKind.INTRO, null, 0) })
     }
 
     /** Next button: leave the current story (summary or article) and go to the next one. */
     fun next() {
+        if (player.currentMediaItem?.kind == ItemKind.INTRO) {
+            removeRange(0, player.currentMediaItemIndex + 1)
+            return
+        }
         val cur = currentStory.value
         if (!isStarted || cur >= stories.size) return
         articleJob?.cancel()
@@ -141,7 +170,8 @@ class StoryQueue(
 
     private suspend fun prefetch() {
         stories = try {
-            hn.topStories(STORY_COUNT)
+            val cfg = config()
+            hn.topStories(cfg.storyCount, exclude = cfg.heard) { cfg.includeAskShow || !it.isAskOrShow }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -150,6 +180,10 @@ class StoryQueue(
             return
         }
         Log.i(TAG, "Loaded ${stories.size} stories")
+        if (stories.isEmpty()) {
+            appendCue("You've heard all the current front page stories. Check back later.")
+            return
+        }
         val window = scope.launch { currentStory.collect(::updateWindow) }
         try {
             // Stories are prepared in parallel but appended strictly in order.
@@ -343,7 +377,6 @@ class StoryQueue(
 
     private companion object {
         const val TAG = "StoryQueue"
-        const val STORY_COUNT = 30
         const val AUDIO_AHEAD = 2
         const val TEXT_AHEAD = 5
         const val ARTICLE_AHEAD = 4

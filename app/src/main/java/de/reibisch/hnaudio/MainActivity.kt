@@ -22,8 +22,9 @@ import de.reibisch.hnaudio.debug.DebugViewModel
 import de.reibisch.hnaudio.settings.SettingsScreen
 import de.reibisch.hnaudio.ui.HnAudioTheme
 import de.reibisch.hnaudio.ui.PlayerScreen
+import de.reibisch.hnaudio.ui.SavedScreen
 
-private enum class Screen { Player, Debug, Settings }
+private enum class Screen { Player, Saved, Debug, Settings }
 
 class MainActivity : ComponentActivity() {
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
@@ -40,8 +41,10 @@ class MainActivity : ComponentActivity() {
                 when (screen) {
                     Screen.Player -> PlayerScreen(
                         onOpenSettings = { screen = Screen.Settings },
+                        onOpenSaved = { screen = Screen.Saved },
                         onOpenDebug = { screen = Screen.Debug },
                     )
+                    Screen.Saved -> SavedScreen(app.settings, onBack = { screen = Screen.Player })
                     Screen.Settings -> SettingsScreen(app.settings, onDone = { screen = Screen.Player })
                     Screen.Debug -> {
                         val vm: DebugViewModel = viewModel(

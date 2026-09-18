@@ -12,6 +12,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -42,6 +48,13 @@ fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
     val savedRate by settings.speechRate.collectAsState(initial = 1.0f)
     var rate by remember { mutableStateOf(1.0f) }
     LaunchedEffect(savedRate) { rate = savedRate }
+    val savedCount by settings.storyCount.collectAsState(initial = Settings.DEFAULT_STORY_COUNT)
+    var count by remember { mutableStateOf(Settings.DEFAULT_STORY_COUNT) }
+    LaunchedEffect(savedCount) { count = savedCount }
+    val savedAskShow by settings.includeAskShow.collectAsState(initial = true)
+    var askShow by remember { mutableStateOf(true) }
+    LaunchedEffect(savedAskShow) { askShow = savedAskShow }
+    val heardCount by settings.heardCount.collectAsState(initial = 0)
 
     Scaffold(
         topBar = {
@@ -52,7 +65,7 @@ fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
         },
     ) { padding ->
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text("Gemini API key", style = MaterialTheme.typography.titleMedium)
@@ -84,12 +97,32 @@ fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
                 onValueChange = { rate = (it * 20).toInt() / 20f },
                 valueRange = 0.5f..2.0f,
             )
+            Text("Stories per session: $count", style = MaterialTheme.typography.titleMedium)
+            Slider(
+                value = count.toFloat(),
+                onValueChange = { count = (it / 5).toInt() * 5 },
+                valueRange = 5f..60f,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Include Ask / Show / Tell HN", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Switch(checked = askShow, onCheckedChange = { askShow = it })
+            }
+            Text(
+                "Stories you've heard are skipped next time ($heardCount remembered).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = { scope.launch { settings.clearHeard() } }, enabled = heardCount > 0) {
+                Text("Forget heard stories")
+            }
             Button(
                 onClick = {
                     scope.launch {
                         if (key.isNotBlank()) settings.setApiKey(key)
                         settings.setModel(model)
                         settings.setSpeechRate(rate)
+                        settings.setStoryCount(count)
+                        settings.setIncludeAskShow(askShow)
                         key = ""
                         onDone()
                     }

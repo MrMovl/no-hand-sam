@@ -34,7 +34,10 @@ data class Story(
 ) {
     val domain: String? get() = url?.let(::domainOf)
     val hnUrl: String get() = "https://news.ycombinator.com/item?id=$id"
+    val isAskOrShow: Boolean get() = ASK_SHOW.any { title.startsWith(it) }
 }
+
+private val ASK_SHOW = listOf("Ask HN", "Show HN", "Tell HN")
 
 fun HnItem.toStory(): Story? {
     if (dead || deleted || title == null) return null

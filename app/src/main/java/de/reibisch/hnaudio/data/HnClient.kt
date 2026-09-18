@@ -28,15 +28,30 @@ class HnClient(
     }
 
     /**
-     * Front page stories in rank order. Items that fail to load or are dead/deleted are
-     * dropped rather than failing the whole list.
+     * Front page stories in rank order, skipping [exclude]d ids and stories [keep] rejects.
+     * Fetches more of the list as needed to still return [limit] stories. Items that fail to
+     * load or are dead/deleted are dropped rather than failing the whole list.
      */
-    suspend fun topStories(limit: Int, concurrency: Int = 8): List<Story> = coroutineScope {
+    suspend fun topStories(
+        limit: Int,
+        exclude: Set<Long> = emptySet(),
+        concurrency: Int = 8,
+        keep: (Story) -> Boolean = { true },
+    ): List<Story> = coroutineScope {
+        val ids = topStoryIds().filter { it !in exclude }
         val permits = Semaphore(concurrency)
-        topStoryIds().take(limit)
-            .map { id -> async { permits.withPermit { itemOrNull(id) } } }
-            .awaitAll()
-            .mapNotNull { it?.toStory() }
+        val result = mutableListOf<Story>()
+        var offset = 0
+        while (result.size < limit && offset < ids.size) {
+            val batch = ids.subList(offset, minOf(offset + maxOf(limit - result.size, 10), ids.size))
+            offset += batch.size
+            result += batch
+                .map { id -> async { permits.withPermit { itemOrNull(id) } } }
+                .awaitAll()
+                .mapNotNull { it?.toStory() }
+                .filter(keep)
+        }
+        result.take(limit)
     }
 
     /** Plain text of the first [limit] live top-level comments, in HN's ranking order. */
