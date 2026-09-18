@@ -23,8 +23,14 @@ done, and tell me how to verify it on the device before continuing.
   (`synthesizeToFile`), then played through ExoPlayer. Speaking directly via
   `speak()` would bypass the media session and break button control.
   Keep TTS behind an interface so a cloud TTS can be swapped in later.
-- **Summaries: Anthropic Messages API, `claude-haiku-4-5`**, called directly
-  from the app with my own API key (BYOK). No backend.
+- **Summaries: Gemini API free tier** (Google AI Studio key, no billing
+  account), default model `gemini-3.5-flash-lite`, model name configurable in
+  settings. Called directly from the app (BYOK, no backend). Keep it behind a
+  `Summarizer` interface so Claude (Haiku) or on-device Gemini Nano can be
+  swapped in later. *Changed 2026-09-18 from Claude Haiku: Claude Pro doesn't
+  include API usage, Gemini's free tier costs nothing. Trade-off: free-tier
+  prompts may be used by Google to improve its products; fine for public HN
+  content.*
 - **Article extraction: OkHttp + Readability4J** (Kotlin port of Mozilla
   Readability).
 - **Build from the terminal** (Gradle CLI, adb). No Android Studio dependency.
@@ -84,19 +90,24 @@ extracted text length / failure reason.
 
 ## Phase 3 – Summarizer
 
-- `Summarizer` calling `POST https://api.anthropic.com/v1/messages`
-  (headers: `x-api-key`, `anthropic-version: 2023-06-01`).
+- `Summarizer` interface; `GeminiSummarizer` calling
+  `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
+  with the key in the `x-goog-api-key` header (not the URL, so it never ends up
+  in logs).
 - Input: title, domain, score, comment count, extracted article text
   (truncate to ~6k tokens). If extraction failed, summarize from the post
   text and the top ~5 comments instead, and say so in the summary.
 - Prompt goals: 2–4 sentences, written for listening (no markdown, no lists,
   no URLs, spell out abbreviations where a TTS would stumble), say what the
   thing actually is and why people care. Plain text output only.
+- Free-tier rate limits: on HTTP 429 honour the server's `retryDelay` (retry at
+  most twice); if the daily quota is used up, fail with a clear message.
 - API key entered in settings, stored in DataStore encrypted with an
   Android Keystore key. Never logged.
-- Cache summaries on disk by story id.
+- Cache summaries on disk by story id, so refreshes don't burn quota.
 
-**Verify:** summaries for the top 5 stories printed to logcat.
+**Verify:** summaries for the top stories shown on the debug screen and
+printed to logcat.
 
 ## Phase 4 – TTS to files
 
@@ -166,6 +177,7 @@ on Wi-Fi.
 
 ## Cost check
 
-Haiku with ~6k input tokens per story is well under one cent per story;
-a 30-story session should stay in the low cents. Log token usage per
-session to logcat so I can verify.
+Gemini free tier: 0 €. Limits are per minute and per day and change over
+time; check them in Google AI Studio. Log token usage per session to logcat
+so usage can be compared against the limits. (For reference, the original
+Claude Haiku plan would have been roughly 20 cents per 30-story session.)

@@ -39,6 +39,18 @@ class HnClient(
             .mapNotNull { it?.toStory() }
     }
 
+    /** Plain text of the first [limit] live top-level comments, in HN's ranking order. */
+    suspend fun comments(ids: List<Long>, limit: Int, concurrency: Int = 5): List<String> = coroutineScope {
+        val permits = Semaphore(concurrency)
+        ids.take(limit * 2) // some will be dead or deleted
+            .map { id -> async { permits.withPermit { itemOrNull(id) } } }
+            .awaitAll()
+            .filterNotNull()
+            .filter { !it.dead && !it.deleted && !it.text.isNullOrBlank() }
+            .take(limit)
+            .map { hnHtmlToParagraphs(it.text!!).joinToString(" ") }
+    }
+
     private suspend fun itemOrNull(id: Long): HnItem? = try {
         item(id)
     } catch (e: IOException) {

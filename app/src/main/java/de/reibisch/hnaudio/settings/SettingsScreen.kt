@@ -1,0 +1,89 @@
+package de.reibisch.hnaudio.settings
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import de.reibisch.hnaudio.summary.GeminiSummarizer
+import kotlinx.coroutines.launch
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val hasKey by settings.hasApiKey.collectAsState(initial = false)
+    val savedModel by settings.model.collectAsState(initial = GeminiSummarizer.DEFAULT_MODEL)
+    var key by remember { mutableStateOf("") }
+    var model by remember { mutableStateOf("") }
+    LaunchedEffect(savedModel) { model = savedModel }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Settings") },
+                navigationIcon = { TextButton(onClick = onDone) { Text("Back") } },
+            )
+        },
+    ) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text("Gemini API key", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (hasKey) "A key is saved. Enter a new one to replace it." else "No key saved yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = key,
+                onValueChange = { key = it },
+                label = { Text("API key") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = model,
+                onValueChange = { model = it },
+                label = { Text("Model") },
+                supportingText = { Text("Default: ${GeminiSummarizer.DEFAULT_MODEL}") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(
+                onClick = {
+                    scope.launch {
+                        if (key.isNotBlank()) settings.setApiKey(key)
+                        settings.setModel(model)
+                        key = ""
+                        onDone()
+                    }
+                },
+            ) { Text("Save") }
+        }
+    }
+}

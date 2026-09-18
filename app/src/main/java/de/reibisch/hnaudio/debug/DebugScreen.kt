@@ -23,13 +23,16 @@ import de.reibisch.hnaudio.data.Extraction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DebugScreen(viewModel: DebugViewModel) {
+fun DebugScreen(viewModel: DebugViewModel, onOpenSettings: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Top stories (debug)") },
-                actions = { TextButton(onClick = viewModel::refresh) { Text("Refresh") } },
+                actions = {
+                    TextButton(onClick = viewModel::refresh) { Text("Refresh") }
+                    TextButton(onClick = onOpenSettings) { Text("Settings") }
+                },
             )
         },
     ) { padding ->
@@ -67,5 +70,9 @@ private fun StoryRow(row: DebugRow) {
                 MaterialTheme.colorScheme.primary
             },
         )
+        row.summary?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        row.summaryError?.let {
+            Text("Summary failed: $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        }
     }
 }
