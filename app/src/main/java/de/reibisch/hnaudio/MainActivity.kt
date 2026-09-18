@@ -27,7 +27,9 @@ class MainActivity : ComponentActivity() {
                 var showSettings by rememberSaveable { mutableStateOf(false) }
                 val vm: DebugViewModel = viewModel(
                     factory = viewModelFactory {
-                        initializer { DebugViewModel(app.hnClient, app.extractor, app.summaries) }
+                        initializer {
+                            DebugViewModel(app.hnClient, app.extractor, app.summaries, app.speech, app.ttsFiles, app)
+                        }
                     },
                 )
                 if (showSettings) {

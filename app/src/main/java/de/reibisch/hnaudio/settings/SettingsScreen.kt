@@ -11,6 +11,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -38,6 +39,9 @@ fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
     var key by remember { mutableStateOf("") }
     var model by remember { mutableStateOf("") }
     LaunchedEffect(savedModel) { model = savedModel }
+    val savedRate by settings.speechRate.collectAsState(initial = 1.0f)
+    var rate by remember { mutableStateOf(1.0f) }
+    LaunchedEffect(savedRate) { rate = savedRate }
 
     Scaffold(
         topBar = {
@@ -74,11 +78,18 @@ fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            Text("Speech rate: %.2f×".format(rate), style = MaterialTheme.typography.titleMedium)
+            Slider(
+                value = rate,
+                onValueChange = { rate = (it * 20).toInt() / 20f },
+                valueRange = 0.5f..2.0f,
+            )
             Button(
                 onClick = {
                     scope.launch {
                         if (key.isNotBlank()) settings.setApiKey(key)
                         settings.setModel(model)
+                        settings.setSpeechRate(rate)
                         key = ""
                         onDone()
                     }

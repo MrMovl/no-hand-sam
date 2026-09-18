@@ -1,6 +1,14 @@
 package de.reibisch.hnaudio.debug
 
+import android.content.Context
+import android.net.Uri
 import android.util.Log
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import de.reibisch.hnaudio.tts.SpeechException
+import de.reibisch.hnaudio.tts.SpeechRenderer
+import de.reibisch.hnaudio.tts.TtsFiles
+import java.io.File
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.reibisch.hnaudio.data.ArticleExtractor
@@ -26,17 +34,27 @@ data class DebugRow(
     val summaryError: String? = null,
 )
 
+/** One line of what the test player is doing, shown at the top of the debug screen. */
+data class PlayerStatus(val storyId: Long, val text: String)
+
 data class DebugState(
     val loading: Boolean = false,
     val error: String? = null,
     val rows: List<DebugRow> = emptyList(),
+    val player: PlayerStatus? = null,
 )
 
 class DebugViewModel(
     private val hn: HnClient,
     private val extractor: ArticleExtractor,
     private val summaries: StorySummaries,
+    private val speech: SpeechRenderer,
+    private val ttsFiles: TtsFiles,
+    context: Context,
 ) : ViewModel() {
+    private val player = ExoPlayer.Builder(context.applicationContext).build()
+    private var playing: List<File> = emptyList()
+    private var playJob: Job? = null
     private val _state = MutableStateFlow(DebugState())
     val state: StateFlow<DebugState> = _state
     private var job: Job? = null
@@ -48,7 +66,7 @@ class DebugViewModel(
     fun refresh() {
         job?.cancel()
         job = viewModelScope.launch {
-            _state.value = DebugState(loading = true)
+            _state.update { DebugState(loading = true, player = it.player) }
             val stories = try {
                 hn.topStories(limit = 10)
             } catch (e: IOException) {
@@ -56,10 +74,7 @@ class DebugViewModel(
                 _state.value = DebugState(error = e.message ?: "network error")
                 return@launch
             }
-            _state.value = DebugState(
-                loading = true,
-                rows = stories.mapIndexed { i, s -> DebugRow(i + 1, s) },
-            )
+            _state.update { it.copy(rows = stories.mapIndexed { i, s -> DebugRow(i + 1, s) }) }
             val fetchPermits = Semaphore(4)
             // Low concurrency keeps us under the free tier's per-minute limit.
             val summaryPermits = Semaphore(2)
@@ -81,6 +96,50 @@ class DebugViewModel(
             }.forEach { it.join() }
             _state.update { it.copy(loading = false) }
         }
+    }
+
+    /** Phase 4 test: render the spoken intro plus summary and play it. */
+    fun play(row: DebugRow) {
+        val summary = row.summary ?: return
+        val story = row.story
+        playJob?.cancel()
+        player.stop()
+        playing.forEach(ttsFiles::delete)
+        playing = emptyList()
+        playJob = viewModelScope.launch {
+            setPlayer(story.id, "Rendering…")
+            val text = "Story ${row.rank}. ${story.title}. " +
+                "${story.score} points, ${story.commentCount} comments.\n\n$summary"
+            val started = System.currentTimeMillis()
+            val files = try {
+                speech.render(text)
+            } catch (e: SpeechException) {
+                setPlayer(story.id, "Speech failed: ${e.message}")
+                return@launch
+            }
+            val ms = System.currentTimeMillis() - started
+            Log.i(TAG, "Rendered ${text.length} chars into ${files.size} file(s) in ${ms} ms")
+            playing = files
+            player.setMediaItems(files.map { MediaItem.fromUri(Uri.fromFile(it)) })
+            player.prepare()
+            player.play()
+            setPlayer(story.id, "Playing (rendered in ${ms} ms, ${files.size} file(s))")
+        }
+    }
+
+    fun stop() {
+        playJob?.cancel()
+        player.stop()
+        _state.update { it.copy(player = null) }
+    }
+
+    override fun onCleared() {
+        player.release()
+        playing.forEach(ttsFiles::delete)
+    }
+
+    private fun setPlayer(storyId: Long, text: String) {
+        _state.update { it.copy(player = PlayerStatus(storyId, text)) }
     }
 
     private fun updateRow(id: Long, change: (DebugRow) -> DebugRow) {

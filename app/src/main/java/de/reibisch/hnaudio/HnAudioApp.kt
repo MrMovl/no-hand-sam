@@ -9,10 +9,20 @@ import de.reibisch.hnaudio.summary.GeminiSummarizer
 import de.reibisch.hnaudio.summary.StorySummaries
 import de.reibisch.hnaudio.summary.SummaryCache
 import de.reibisch.hnaudio.summary.UsageLog
+import de.reibisch.hnaudio.tts.SystemSpeechRenderer
+import de.reibisch.hnaudio.tts.TtsFiles
 import kotlinx.coroutines.flow.first
 import java.io.File
 
 class HnAudioApp : Application() {
+    val ttsFiles by lazy { TtsFiles(cacheDir) }
+    val speech by lazy { SystemSpeechRenderer(this, ttsFiles, speechRate = { settings.speechRate.first() }) }
+
+    override fun onCreate() {
+        super.onCreate()
+        Thread { ttsFiles.trim() }.start()
+    }
+
     val http by lazy { defaultHttpClient() }
     val settings by lazy { Settings(this) }
     val hnClient by lazy { HnClient(http) }

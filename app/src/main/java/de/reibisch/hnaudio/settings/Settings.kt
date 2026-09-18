@@ -2,6 +2,7 @@ package de.reibisch.hnaudio.settings
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import de.reibisch.hnaudio.summary.GeminiSummarizer
@@ -17,6 +18,12 @@ class Settings(context: Context) {
 
     val hasApiKey: Flow<Boolean> = store.data.map { it[API_KEY] != null }
     val model: Flow<String> = store.data.map { it[MODEL] ?: GeminiSummarizer.DEFAULT_MODEL }
+
+    val speechRate: Flow<Float> = store.data.map { it[SPEECH_RATE] ?: 1.0f }
+
+    suspend fun setSpeechRate(rate: Float) {
+        store.edit { it[SPEECH_RATE] = rate }
+    }
 
     suspend fun apiKey(): String? = store.data.first()[API_KEY]?.let(box::decrypt)
 
@@ -36,5 +43,6 @@ class Settings(context: Context) {
     private companion object {
         val API_KEY = stringPreferencesKey("gemini_api_key_encrypted")
         val MODEL = stringPreferencesKey("gemini_model")
+        val SPEECH_RATE = floatPreferencesKey("speech_rate")
     }
 }
