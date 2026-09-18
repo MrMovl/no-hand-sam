@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Why We Rewrote Our Build System in a Weekend | Example Engineering</title>
+  <script>window.analytics = { track: function() {} };</script>
+</head>
+<body>
+  <header class="site-header">
+    <nav><a href="/">Home</a> <a href="/blog">Blog</a> <a href="/about">About</a> <a href="/jobs">We're hiring!</a></nav>
+  </header>
+  <aside class="sidebar">
+    <h3>Subscribe</h3>
+    <p>Get new posts by email. No spam, unsubscribe any time.</p>
+    <ul><li><a href="/tag/builds">builds</a></li><li><a href="/tag/rust">rust</a></li></ul>
+  </aside>
+  <main>
+    <article class="post">
+      <h1>Why We Rewrote Our Build System in a Weekend</h1>
+      <p class="byline">By Jane Example, March 3</p>
+      <p>For three years our continuous integration pipeline took forty minutes on a good day. Every engineer on the team had a story about pushing a one-line change, going to lunch, and coming back to a flaky failure in a test suite that had nothing to do with their change.</p>
+      <p>We had tried the usual fixes. We added caching, we split the test suite into shards, and we bought bigger machines. Each of these helped for a few weeks, and then the build crept back up as the codebase grew.</p>
+      <h2>What was actually slow</h2>
+      <p>When we finally profiled the pipeline end to end, the answer was embarrassing. More than half of the time was spent resolving dependencies that had not changed, because our build tool invalidated its cache whenever a lockfile timestamp changed, even when the contents were identical.</p>
+      <blockquote><p>The fastest build step is the one you never run.</p></blockquote>
+      <p>The fix itself was small: hash the contents instead of trusting modification times. But getting there required untangling a pile of shell scripts that nobody fully understood anymore.</p>
+      <ul>
+        <li>Content hashing for every input file</li>
+        <li>A single entry point instead of eleven scripts</li>
+        <li>Remote caching shared between developers and CI</li>
+      </ul>
+      <pre><code>build --cache=remote --hash=content ./...</code></pre>
+      <p>Today a typical pull request builds in under four minutes. More importantly, people trust the build again, which means they stop re-running it just in case.</p>
+    </article>
+    <section class="comments">
+      <h3>12 comments</h3>
+      <div class="comment"><p>Great write-up, we had the exact same problem!</p></div>
+    </section>
+  </main>
+  <footer><p>&copy; Example Engineering. All rights reserved.</p><a href="/privacy">Privacy</a></footer>
+</body>
+</html>
