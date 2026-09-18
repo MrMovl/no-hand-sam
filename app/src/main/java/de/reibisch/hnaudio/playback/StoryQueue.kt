@@ -1,5 +1,6 @@
 package de.reibisch.hnaudio.playback
 
+import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -15,13 +16,21 @@ import de.reibisch.hnaudio.tts.SpeechRenderer
 import de.reibisch.hnaudio.tts.TtsFiles
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.io.IOException
 import kotlin.math.roundToInt
+
+private class StoryText(val extraction: Extraction, val summary: String?)
 
 /**
  * Builds the playlist: one summary item per story, prepared a few stories ahead of the
@@ -40,6 +49,16 @@ class StoryQueue(
 ) {
     private var stories: List<Story> = emptyList()
     private val extractions = mutableMapOf<Int, Extraction>()
+
+    /** Article + summary per story; cheap to keep, so prepared further ahead than audio. */
+    private val texts = mutableMapOf<Int, Deferred<StoryText>>()
+    private val audio = mutableMapOf<Int, Deferred<List<File>>>()
+    private val appended = mutableSetOf<Int>()
+    private val extractPermits = Semaphore(4)
+    private val summaryPermits = Semaphore(2)
+
+    /** When the player ran out of items; used to log dead air. */
+    private var waitingSince = 0L
 
     /** Story the listener is on; `stories.size` once the end cue is reached. */
     private val currentStory = MutableStateFlow(0)
@@ -65,6 +84,12 @@ class StoryQueue(
             // The listener only moves forward, so everything before the current item is done.
             scope.launch { removeRange(0, player.currentMediaItemIndex) }
         }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_ENDED && player.currentMediaItem?.kind != ItemKind.END) {
+                waitingSince = SystemClock.elapsedRealtime()
+            }
+        }
     }
 
     init {
@@ -75,6 +100,7 @@ class StoryQueue(
         prefetchJob?.cancel()
         articleJob?.cancel()
         removeRange(0, player.mediaItemCount)
+        cancelPipeline()
         stories = emptyList()
         extractions.clear()
         currentStory.value = 0
@@ -107,6 +133,7 @@ class StoryQueue(
 
     fun release() {
         player.removeListener(listener)
+        cancelPipeline()
         prefetchJob?.cancel()
         articleJob?.cancel()
         removeRange(0, player.mediaItemCount)
@@ -123,37 +150,91 @@ class StoryQueue(
             return
         }
         Log.i(TAG, "Loaded ${stories.size} stories")
-        for (index in stories.indices) {
-            currentStory.first { index <= it + PREPARE_AHEAD }
-            if (index < currentStory.value) continue // skipped before we got to it
-            val files = prepareSummary(index)
-            if (index < currentStory.value) {
-                files.forEach(ttsFiles::delete)
-                continue
+        val window = scope.launch { currentStory.collect(::updateWindow) }
+        try {
+            // Stories are prepared in parallel but appended strictly in order.
+            for (index in stories.indices) {
+                currentStory.first { index <= it + AUDIO_AHEAD }
+                if (index < currentStory.value) continue
+                val files = try {
+                    audioFor(index).await()
+                } catch (e: CancellationException) {
+                    currentCoroutineContext().ensureActive()
+                    continue // this story was skipped while it was being prepared
+                }
+                if (index < currentStory.value) {
+                    files.forEach(ttsFiles::delete)
+                    continue
+                }
+                appended += index
+                append(files.map { queueItem(it, index, ItemKind.SUMMARY, stories[index], stories.size) })
             }
-            append(files.map { queueItem(it, index, ItemKind.SUMMARY, stories[index], stories.size) })
+        } finally {
+            window.cancel()
         }
         appendCue("That's all the stories for now.")
     }
 
-    private suspend fun prepareSummary(index: Int): List<File> {
-        val story = stories[index]
-        val extraction = extractor.extract(story.url).also { extractions[index] = it }
-        val summary = try {
-            summaries.summaryFor(story, extraction).text
-        } catch (e: SummaryException) {
-            Log.w(TAG, "Summary for #${index + 1} failed: ${e.message}")
-            "There's no summary for this one."
-        } catch (e: IOException) {
-            "There's no summary for this one."
+    /** Starts work for the stories ahead of [cur] and cancels work for stories behind it. */
+    private fun updateWindow(cur: Int) {
+        for (i in (texts.keys + audio.keys).filter { it < cur }) {
+            texts.remove(i)?.cancel()
+            audio.remove(i)?.let { job ->
+                job.cancel()
+                // Rendered but never appended: nobody else will delete these files.
+                if (i !in appended) scope.launch { runCatching { job.await() }.getOrNull()?.forEach(ttsFiles::delete) }
+            }
         }
-        val intro = "Story ${index + 1}. ${story.title}. ${story.score} points, ${story.commentCount} comments."
-        return try {
-            speech.render("$intro\n\n$summary")
-        } catch (e: SpeechException) {
-            Log.w(TAG, "Rendering #${index + 1} failed: ${e.message}")
-            emptyList()
+        val last = stories.lastIndex
+        for (i in cur..minOf(cur + TEXT_AHEAD, last)) textFor(i)
+        for (i in cur..minOf(cur + AUDIO_AHEAD, last)) audioFor(i)
+    }
+
+    private fun textFor(index: Int): Deferred<StoryText> = texts.getOrPut(index) {
+        scope.async {
+            val story = stories[index]
+            val extraction = extractPermits.withPermit { extractor.extract(story.url) }
+            extractions[index] = extraction
+            val summary = try {
+                summaryPermits.withPermit { summaries.summaryFor(story, extraction).text }
+            } catch (e: SummaryException) {
+                Log.w(TAG, "Summary for #${index + 1} failed: ${e.message}")
+                null
+            } catch (e: IOException) {
+                Log.w(TAG, "Summary for #${index + 1} failed: $e")
+                null
+            }
+            StoryText(extraction, summary)
         }
+    }
+
+    private fun audioFor(index: Int): Deferred<List<File>> = audio.getOrPut(index) {
+        scope.async {
+            val text = textFor(index).await()
+            // The speech engine renders one text at a time; make sure the story the listener
+            // needs first gets it first, instead of whichever summary arrived first.
+            audio[index - 1]?.join()
+            val story = stories[index]
+            val intro = "Story ${index + 1}. ${story.title}. ${story.score} points, ${story.commentCount} comments."
+            val body = text.summary ?: "Sorry, I couldn't load this one."
+            val started = SystemClock.elapsedRealtime()
+            try {
+                speech.render("$intro\n\n$body").also {
+                    Log.i(TAG, "Rendered #${index + 1} in ${SystemClock.elapsedRealtime() - started} ms")
+                }
+            } catch (e: SpeechException) {
+                Log.w(TAG, "Rendering #${index + 1} failed: ${e.message}")
+                emptyList()
+            }
+        }
+    }
+
+    private fun cancelPipeline() {
+        texts.values.forEach { it.cancel() }
+        audio.values.forEach { it.cancel() }
+        texts.clear()
+        audio.clear()
+        appended.clear()
     }
 
     private fun readArticle(storyIndex: Int) {
@@ -234,7 +315,13 @@ class StoryQueue(
         val first = player.mediaItemCount
         player.addMediaItems(items)
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
-        if (waiting) player.seekTo(first, 0)
+        if (waiting) {
+            player.seekTo(first, 0)
+            if (waitingSince > 0 && player.playWhenReady) {
+                Log.i(TAG, "Dead air: ${SystemClock.elapsedRealtime() - waitingSince} ms")
+            }
+            waitingSince = 0
+        }
     }
 
     private fun articleItemsAhead(storyIndex: Int): Int =
@@ -257,7 +344,8 @@ class StoryQueue(
     private companion object {
         const val TAG = "StoryQueue"
         const val STORY_COUNT = 30
-        const val PREPARE_AHEAD = 2
+        const val AUDIO_AHEAD = 2
+        const val TEXT_AHEAD = 5
         const val ARTICLE_AHEAD = 4
         const val WORDS_PER_MINUTE = 165f
     }
