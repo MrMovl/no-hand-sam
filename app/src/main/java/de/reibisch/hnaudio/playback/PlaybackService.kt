@@ -77,9 +77,14 @@ class PlaybackService : MediaSessionService() {
             .setSessionCommand(SAVE_COMMAND)
             .setSlots(CommandButton.SLOT_OVERFLOW)
             .build()
+        val backButton = CommandButton.Builder(CommandButton.ICON_SKIP_BACK)
+            .setDisplayName("Previous story")
+            .setSessionCommand(PREVIOUS_STORY_COMMAND)
+            .setSlots(CommandButton.SLOT_OVERFLOW)
+            .build()
         session = MediaSession.Builder(this, HnPlayer(exo, queue))
             .setSessionActivity(openApp)
-            .setMediaButtonPreferences(ImmutableList.of(saveButton))
+            .setMediaButtonPreferences(ImmutableList.of(backButton, saveButton))
             .setCallback(SessionCallback())
             .build()
     }
@@ -91,7 +96,10 @@ class PlaybackService : MediaSessionService() {
         ): MediaSession.ConnectionResult =
             MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(
-                    MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon().add(SAVE_COMMAND).build(),
+                    MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
+                        .add(SAVE_COMMAND)
+                        .add(PREVIOUS_STORY_COMMAND)
+                        .build(),
                 )
                 .build()
 
@@ -101,8 +109,13 @@ class PlaybackService : MediaSessionService() {
             customCommand: SessionCommand,
             args: Bundle,
         ): ListenableFuture<SessionResult> {
-            if (customCommand.customAction != SAVE_COMMAND.customAction) {
-                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
+            when (customCommand.customAction) {
+                SAVE_COMMAND.customAction -> Unit
+                PREVIOUS_STORY_COMMAND.customAction -> {
+                    queue?.previousStory()
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+                else -> return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_NOT_SUPPORTED))
             }
             val story = queue?.currentStoryOrNull
                 ?: return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_INVALID_STATE))
@@ -134,5 +147,6 @@ class PlaybackService : MediaSessionService() {
 
     companion object {
         val SAVE_COMMAND = SessionCommand("de.reibisch.hnaudio.SAVE", Bundle.EMPTY)
+        val PREVIOUS_STORY_COMMAND = SessionCommand("de.reibisch.hnaudio.PREVIOUS_STORY", Bundle.EMPTY)
     }
 }

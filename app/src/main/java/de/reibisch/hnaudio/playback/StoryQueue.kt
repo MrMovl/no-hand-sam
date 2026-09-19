@@ -15,6 +15,7 @@ import de.reibisch.hnaudio.tts.SpeechException
 import de.reibisch.hnaudio.tts.SpeechRenderer
 import de.reibisch.hnaudio.tts.TtsFiles
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
@@ -72,6 +73,7 @@ class StoryQueue(
 
     private var prefetchJob: Job? = null
     private var articleJob: Job? = null
+    private var backJob: Job? = null
     private var articleStory = -1
 
     var isStarted = false
@@ -103,6 +105,7 @@ class StoryQueue(
 
     fun start() {
         prefetchJob?.cancel()
+        backJob?.cancel()
         articleJob?.cancel()
         removeRange(0, player.mediaItemCount)
         cancelPipeline()
@@ -144,6 +147,7 @@ class StoryQueue(
         val cur = currentStory.value
         if (!isStarted || cur >= stories.size) return
         articleJob?.cancel()
+        backJob?.cancel()
         currentStory.value = cur + 1
         // Removing the playing item makes the player continue with whatever follows it,
         // or end and wait until the next story has been appended.
@@ -157,6 +161,38 @@ class StoryQueue(
         when (item.kind) {
             ItemKind.SUMMARY -> readArticle(item.storyIndex)
             else -> player.seekTo(player.currentMediaItemIndex, 0)
+        }
+    }
+
+    /**
+     * Back one story: plays the previous story's summary again, then the current story from
+     * its start. Played audio is deleted, so both are re-rendered from the cached summaries.
+     */
+    fun previousStory() {
+        val kind = player.currentMediaItem?.kind ?: return
+        val cur = currentStory.value
+        if (!isStarted || kind == ItemKind.INTRO || cur < 1 || backJob?.isActive == true) return
+        val target = cur - 1
+        articleJob?.cancel()
+        backJob = scope.launch {
+            val targetFiles = renderStory(target)
+            if (currentStory.value != cur || targetFiles.isEmpty()) {
+                targetFiles.forEach(ttsFiles::delete)
+                return@launch // the listener moved on meanwhile
+            }
+            // Keep the prefetch window from rendering it a second time.
+            audio[target] = CompletableDeferred(targetFiles)
+            appended += target
+            val at = indexOfFirst { it.storyIndex >= cur } ?: player.mediaItemCount
+            val targetItems = targetFiles.map { queueItem(it, target, ItemKind.SUMMARY, stories[target], stories.size) }
+            player.addMediaItems(at, targetItems)
+            player.seekTo(at, 0)
+            if (cur >= stories.size) return@launch // we were on the end cue, which stays
+            // Replace what's left of the current story (a half-heard summary or an article).
+            val from = at + targetItems.size
+            removeRange(from, indexOfFirst { it.storyIndex > cur } ?: player.mediaItemCount)
+            val curItems = renderStory(cur).map { queueItem(it, cur, ItemKind.SUMMARY, stories[cur], stories.size) }
+            insertAfterStory(target, curItems)
         }
     }
 
@@ -227,8 +263,8 @@ class StoryQueue(
     private fun textFor(index: Int): Deferred<StoryText> = texts.getOrPut(index) {
         scope.async {
             val story = stories[index]
-            val extraction = extractPermits.withPermit { extractor.extract(story.url) }
-            extractions[index] = extraction
+            val extraction = extractions[index]
+                ?: extractPermits.withPermit { extractor.extract(story.url) }.also { extractions[index] = it }
             val summary = try {
                 summaryPermits.withPermit { summaries.summaryFor(story, extraction).text }
             } catch (e: SummaryException) {
@@ -244,22 +280,28 @@ class StoryQueue(
 
     private fun audioFor(index: Int): Deferred<List<File>> = audio.getOrPut(index) {
         scope.async {
-            val text = textFor(index).await()
+            textFor(index).await()
             // The speech engine renders one text at a time; make sure the story the listener
             // needs first gets it first, instead of whichever summary arrived first.
             audio[index - 1]?.join()
-            val story = stories[index]
-            val intro = "Story ${index + 1}. ${story.title}. ${story.score} points, ${story.commentCount} comments."
-            val body = text.summary ?: "Sorry, I couldn't load this one."
-            val started = SystemClock.elapsedRealtime()
-            try {
-                speech.render("$intro\n\n$body").also {
-                    Log.i(TAG, "Rendered #${index + 1} in ${SystemClock.elapsedRealtime() - started} ms")
-                }
-            } catch (e: SpeechException) {
-                Log.w(TAG, "Rendering #${index + 1} failed: ${e.message}")
-                emptyList()
+            renderStory(index)
+        }
+    }
+
+    /** Intro + summary audio; the summary comes from the disk cache when revisiting. */
+    private suspend fun renderStory(index: Int): List<File> {
+        val text = textFor(index).await()
+        val story = stories[index]
+        val intro = "Story ${index + 1}. ${story.title}. ${story.score} points, ${story.commentCount} comments."
+        val body = text.summary ?: "Sorry, I couldn't load this one."
+        val started = SystemClock.elapsedRealtime()
+        return try {
+            speech.render("$intro\n\n$body").also {
+                Log.i(TAG, "Rendered #${index + 1} in ${SystemClock.elapsedRealtime() - started} ms")
             }
+        } catch (e: SpeechException) {
+            Log.w(TAG, "Rendering #${index + 1} failed: ${e.message}")
+            emptyList()
         }
     }
 

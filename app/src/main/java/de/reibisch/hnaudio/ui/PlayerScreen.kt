@@ -169,7 +169,12 @@ fun PlayerScreen(onOpenSettings: () -> Unit, onOpenSaved: () -> Unit, onOpenDebu
                 enabled = c != null,
                 modifier = Modifier.fillMaxWidth().height(96.dp),
             ) { Text(if (state.isPlaying) "Pause" else "Play", style = MaterialTheme.typography.headlineSmall) }
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                FilledTonalButton(
+                    onClick = { c?.sendCustomCommand(PlaybackService.PREVIOUS_STORY_COMMAND, Bundle.EMPTY) },
+                    enabled = c != null && state.title != null && state.kind != ItemKind.INTRO,
+                    modifier = Modifier.weight(1f).height(72.dp),
+                ) { Text("Previous story", textAlign = TextAlign.Center) }
                 val inArticle = state.kind == ItemKind.ARTICLE || state.kind == ItemKind.ARTICLE_CUE
                 FilledTonalButton(
                     onClick = { c?.seekToPrevious() },
@@ -180,7 +185,7 @@ fun PlayerScreen(onOpenSettings: () -> Unit, onOpenSaved: () -> Unit, onOpenDebu
                     onClick = { c?.seekToNext() },
                     enabled = c != null && state.title != null,
                     modifier = Modifier.weight(1f).height(72.dp),
-                ) { Text("Next story") }
+                ) { Text("Next story", textAlign = TextAlign.Center) }
             }
             if (onStory) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
