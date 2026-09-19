@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.layout.Row
@@ -35,10 +36,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import de.reibisch.hnaudio.summary.GeminiSummarizer
 import kotlinx.coroutines.launch
+import de.reibisch.hnaudio.voice.VoiceModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
+fun SettingsScreen(settings: Settings, voiceModel: VoiceModel, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     val hasKey by settings.hasApiKey.collectAsState(initial = false)
     val savedModel by settings.model.collectAsState(initial = GeminiSummarizer.DEFAULT_MODEL)
@@ -115,6 +117,7 @@ fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
             OutlinedButton(onClick = { scope.launch { settings.clearHeard() } }, enabled = heardCount > 0) {
                 Text("Forget heard stories")
             }
+            VoiceModelSection(voiceModel)
             Button(
                 onClick = {
                     scope.launch {
@@ -129,5 +132,40 @@ fun SettingsScreen(settings: Settings, onDone: () -> Unit) {
                 },
             ) { Text("Save") }
         }
+    }
+}
+
+@Composable
+private fun VoiceModelSection(model: VoiceModel) {
+    val scope = rememberCoroutineScope()
+    val installed by model.installed.collectAsState()
+    val progress by model.progress.collectAsState()
+    var error by remember { mutableStateOf<String?>(null) }
+    Text("Voice commands", style = MaterialTheme.typography.titleMedium)
+    Text(
+        if (installed) {
+            "Offline English speech model installed."
+        } else {
+            "Needs a one-time download of an offline English speech model (${VoiceModel.SIZE_LABEL}). " +
+                "Nothing you say leaves the phone."
+        },
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    progress?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
+    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    when {
+        progress != null -> Unit
+        installed -> OutlinedButton(onClick = { model.delete() }) { Text("Delete speech model") }
+        else -> OutlinedButton(onClick = {
+            error = null
+            scope.launch {
+                try {
+                    model.download()
+                } catch (e: java.io.IOException) {
+                    error = "Download failed: ${e.message}"
+                }
+            }
+        }) { Text("Download speech model") }
     }
 }

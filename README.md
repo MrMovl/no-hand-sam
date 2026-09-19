@@ -19,6 +19,25 @@ The notification's extra buttons and the app also offer **Previous story** and
 
 Stories you've heard (including skipped ones) are left out next time.
 
+### Voice commands
+
+Optional, offline, English. Download the speech model once in Settings
+(39 MB, [Vosk](https://alphacephei.com/vosk/) `vosk-model-small-en-us-0.15`),
+then tap **Voice commands** on the player screen. It listens through the
+phone's microphone (a Bluetooth headset mic would force call-quality audio),
+beeps when it understood a command, and turns itself off after 30 minutes
+without playback. Android only allows starting it while the app is open.
+
+| Say                                        | Does                      |
+|--------------------------------------------|---------------------------|
+| "next story", "next", "skip"               | Next story                |
+| "previous story", "go back"                | Back one story            |
+| "read article", "read more", "full article"| Read the full article     |
+| "repeat"                                   | Restart the paragraph     |
+| "save story", "save this", "bookmark"      | Save for later            |
+| "pause", "stop"                            | Pause                     |
+| "play", "continue", "resume"               | Play                      |
+
 ## How it works
 
 - Stories come from the official HN Firebase API.

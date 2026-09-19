@@ -40,12 +40,13 @@ class MainActivity : ComponentActivity() {
                 if (screen != Screen.Player) BackHandler { screen = Screen.Player }
                 when (screen) {
                     Screen.Player -> PlayerScreen(
+                        voiceModel = app.voiceModel,
                         onOpenSettings = { screen = Screen.Settings },
                         onOpenSaved = { screen = Screen.Saved },
                         onOpenDebug = { screen = Screen.Debug },
                     )
                     Screen.Saved -> SavedScreen(app.settings, onBack = { screen = Screen.Player })
-                    Screen.Settings -> SettingsScreen(app.settings, onDone = { screen = Screen.Player })
+                    Screen.Settings -> SettingsScreen(app.settings, app.voiceModel, onDone = { screen = Screen.Player })
                     Screen.Debug -> {
                         val vm: DebugViewModel = viewModel(
                             factory = viewModelFactory {

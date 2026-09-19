@@ -11,6 +11,7 @@ import de.reibisch.hnaudio.summary.SummaryCache
 import de.reibisch.hnaudio.summary.UsageLog
 import de.reibisch.hnaudio.tts.SystemSpeechRenderer
 import de.reibisch.hnaudio.tts.TtsFiles
+import de.reibisch.hnaudio.voice.VoiceModel
 import kotlinx.coroutines.flow.first
 import java.io.File
 
@@ -24,6 +25,7 @@ class HnAudioApp : Application() {
     }
 
     val http by lazy { defaultHttpClient() }
+    val voiceModel by lazy { VoiceModel(filesDir, cacheDir, http) }
     val settings by lazy { Settings(this) }
     val hnClient by lazy { HnClient(http) }
     val extractor by lazy { ArticleExtractor(http) }

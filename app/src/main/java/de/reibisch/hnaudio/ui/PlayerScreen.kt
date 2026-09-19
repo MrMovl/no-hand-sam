@@ -1,11 +1,15 @@
 package de.reibisch.hnaudio.ui
 
+import android.Manifest
 import android.content.ComponentName
+import android.content.pm.PackageManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -51,6 +56,10 @@ import de.reibisch.hnaudio.playback.PlaybackService
 import de.reibisch.hnaudio.playback.articleUrl
 import de.reibisch.hnaudio.playback.kind
 import de.reibisch.hnaudio.playback.storyId
+import de.reibisch.hnaudio.voice.VoiceCommandService
+import de.reibisch.hnaudio.voice.VoiceModel
+import de.reibisch.hnaudio.voice.VoiceState
+import de.reibisch.hnaudio.voice.VoiceStatus
 import kotlinx.coroutines.delay
 
 private data class NowPlaying(
@@ -108,7 +117,12 @@ fun openInBrowser(context: Context, url: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PlayerScreen(onOpenSettings: () -> Unit, onOpenSaved: () -> Unit, onOpenDebug: () -> Unit) {
+fun PlayerScreen(
+    voiceModel: VoiceModel,
+    onOpenSettings: () -> Unit,
+    onOpenSaved: () -> Unit,
+    onOpenDebug: () -> Unit,
+) {
     val context = LocalContext.current
     var status by remember { mutableStateOf<String?>(null) }
     val controller = rememberMediaController(context) { status = it }
@@ -204,6 +218,7 @@ fun PlayerScreen(onOpenSettings: () -> Unit, onOpenSaved: () -> Unit, onOpenDebu
                     modifier = Modifier.weight(1f).height(72.dp),
                 ) { Text("Next story", textAlign = TextAlign.Center) }
             }
+            VoiceToggle(voiceModel, onOpenSettings)
             if (onStory) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(
@@ -226,4 +241,43 @@ fun PlayerScreen(onOpenSettings: () -> Unit, onOpenSaved: () -> Unit, onOpenDebu
             }
         }
     }
+}
+
+@Composable
+private fun VoiceToggle(voiceModel: VoiceModel, onOpenSettings: () -> Unit) {
+    val context = LocalContext.current
+    val status by VoiceState.status.collectAsState()
+    val lastHeard by VoiceState.lastHeard.collectAsState()
+    val installed by voiceModel.installed.collectAsState()
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) VoiceCommandService.start(context)
+    }
+    val on = status == VoiceStatus.Listening || status == VoiceStatus.Starting
+    OutlinedButton(
+        onClick = {
+            when {
+                on -> VoiceCommandService.stop(context)
+                !installed -> onOpenSettings()
+                ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED -> VoiceCommandService.start(context)
+                else -> askMic.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(
+            when {
+                status == VoiceStatus.Starting -> "Voice commands: starting…"
+                on -> "Voice commands: on"
+                !installed -> "Voice commands: set up in Settings"
+                else -> "Voice commands: off"
+            },
+        )
+    }
+    val detail = when (val s = status) {
+        is VoiceStatus.Failed -> "Voice commands stopped: ${s.message}"
+        VoiceStatus.Listening -> lastHeard?.let { "Last heard: \"$it\"" } ?: "Say \"next story\", \"read article\", \"save story\", \"pause\"…"
+        else -> null
+    }
+    detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 }
