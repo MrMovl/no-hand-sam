@@ -1,7 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// Release signing comes from local.properties (git-ignored), see README.md.
+val localProps = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.exists() }?.reader()?.use(::load)
 }
 
 android {
@@ -16,9 +23,21 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        if (localProps.getProperty("release.storeFile") != null) {
+            create("release") {
+                storeFile = file(localProps.getProperty("release.storeFile"))
+                storePassword = localProps.getProperty("release.storePassword")
+                keyAlias = localProps.getProperty("release.keyAlias")
+                keyPassword = localProps.getProperty("release.keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

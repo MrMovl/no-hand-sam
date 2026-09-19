@@ -63,6 +63,9 @@ class PlaybackService : MediaSessionService() {
                 )
             },
             onStoryStarted = { story -> scope.launch { settings.markHeard(story.id) } },
+            onStatus = { status ->
+                session?.setSessionExtras(Bundle().apply { putString(EXTRA_STATUS, status) })
+            },
         ).also { queue = it }
         val openApp = PendingIntent.getActivity(
             this,
@@ -146,6 +149,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
+        const val EXTRA_STATUS = "status"
         val SAVE_COMMAND = SessionCommand("de.reibisch.hnaudio.SAVE", Bundle.EMPTY)
         val PREVIOUS_STORY_COMMAND = SessionCommand("de.reibisch.hnaudio.PREVIOUS_STORY", Bundle.EMPTY)
     }

@@ -51,6 +51,8 @@ class StoryQueue(
     private val speechRate: suspend () -> Float,
     private val config: suspend () -> QueueConfig,
     private val onStoryStarted: (Story) -> Unit,
+    /** Short description of background work for the UI, or null when idle. */
+    private val onStatus: (String?) -> Unit,
 ) {
     private var stories: List<Story> = emptyList()
     private val extractions = mutableMapOf<Int, Extraction>()
@@ -61,6 +63,11 @@ class StoryQueue(
     private val appended = mutableSetOf<Int>()
     private val extractPermits = Semaphore(4)
     private val summaryPermits = Semaphore(2)
+
+    /** What each story being prepared is doing right now, for the status line. */
+    private val stages = mutableMapOf<Int, String>()
+    private var loadingStories = false
+    private var loadingArticle = false
 
     /** When the player ran out of items; used to log dead air. */
     private var waitingSince = 0L
@@ -196,6 +203,29 @@ class StoryQueue(
         }
     }
 
+    private fun articleReady() {
+        if (!loadingArticle) return
+        loadingArticle = false
+        publishStatus()
+    }
+
+    private fun setStage(index: Int, stage: String?) {
+        if (stage == null) stages.remove(index) else stages[index] = stage
+        publishStatus()
+    }
+
+    private fun publishStatus() {
+        val next = stages.keys.minOrNull()
+        onStatus(
+            when {
+                loadingStories -> "Loading the front page…"
+                loadingArticle -> "Preparing the full article…"
+                next != null -> "Preparing story ${next + 1}: ${stages[next]}"
+                else -> null
+            },
+        )
+    }
+
     fun release() {
         player.removeListener(listener)
         cancelPipeline()
@@ -205,6 +235,8 @@ class StoryQueue(
     }
 
     private suspend fun prefetch() {
+        loadingStories = true
+        publishStatus()
         stories = try {
             val cfg = config()
             hn.topStories(cfg.storyCount, exclude = cfg.heard) { cfg.includeAskShow || !it.isAskOrShow }
@@ -214,6 +246,9 @@ class StoryQueue(
             Log.w(TAG, "Loading stories failed: $e")
             appendCue("Couldn't load Hacker News. Check your internet connection and press play to try again.")
             return
+        } finally {
+            loadingStories = false
+            publishStatus()
         }
         Log.i(TAG, "Loaded ${stories.size} stories")
         if (stories.isEmpty()) {
@@ -247,6 +282,8 @@ class StoryQueue(
 
     /** Starts work for the stories ahead of [cur] and cancels work for stories behind it. */
     private fun updateWindow(cur: Int) {
+        stages.keys.filter { it < cur }.forEach { stages.remove(it) }
+        publishStatus()
         for (i in (texts.keys + audio.keys).filter { it < cur }) {
             texts.remove(i)?.cancel()
             audio.remove(i)?.let { job ->
@@ -263,8 +300,10 @@ class StoryQueue(
     private fun textFor(index: Int): Deferred<StoryText> = texts.getOrPut(index) {
         scope.async {
             val story = stories[index]
+            setStage(index, "fetching the article")
             val extraction = extractions[index]
                 ?: extractPermits.withPermit { extractor.extract(story.url) }.also { extractions[index] = it }
+            setStage(index, "summarizing")
             val summary = try {
                 summaryPermits.withPermit { summaries.summaryFor(story, extraction).text }
             } catch (e: SummaryException) {
@@ -274,6 +313,7 @@ class StoryQueue(
                 Log.w(TAG, "Summary for #${index + 1} failed: $e")
                 null
             }
+            setStage(index, null) // text is ready; audio may only be rendered later
             StoryText(extraction, summary)
         }
     }
@@ -295,6 +335,7 @@ class StoryQueue(
         val intro = "Story ${index + 1}. ${story.title}. ${story.score} points, ${story.commentCount} comments."
         val body = text.summary ?: "Sorry, I couldn't load this one."
         val started = SystemClock.elapsedRealtime()
+        setStage(index, "generating speech")
         return try {
             speech.render("$intro\n\n$body").also {
                 Log.i(TAG, "Rendered #${index + 1} in ${SystemClock.elapsedRealtime() - started} ms")
@@ -302,10 +343,15 @@ class StoryQueue(
         } catch (e: SpeechException) {
             Log.w(TAG, "Rendering #${index + 1} failed: ${e.message}")
             emptyList()
+        } finally {
+            setStage(index, null)
         }
     }
 
     private fun cancelPipeline() {
+        stages.clear()
+        loadingArticle = false
+        publishStatus()
         texts.values.forEach { it.cancel() }
         audio.values.forEach { it.cancel() }
         texts.clear()
@@ -319,12 +365,15 @@ class StoryQueue(
         articleJob?.cancel()
         articleStory = storyIndex
         articleJob = scope.launch {
+            loadingArticle = true
+            publishStatus()
             try {
                 val extraction = extractions[storyIndex] ?: extractor.extract(story.url)
                 val paragraphs = (extraction as? Extraction.Article)?.paragraphs
                     ?: story.text.takeIf { it.isNotEmpty() }
                 if (paragraphs == null) {
                     insertAndJump(storyIndex, speech.render(unavailableText(extraction)))
+                    articleReady()
                     return@launch
                 }
                 val cue = if (extraction is Extraction.Article) {
@@ -335,6 +384,7 @@ class StoryQueue(
                     "Reading the full post."
                 }
                 insertAndJump(storyIndex, speech.render(cue))
+                articleReady()
                 for (paragraph in paragraphs) {
                     // Stay a few paragraphs ahead; a long article would otherwise be 100+ MB of WAV.
                     positionTick.first { articleItemsAhead(storyIndex) < ARTICLE_AHEAD }
@@ -343,6 +393,8 @@ class StoryQueue(
                 }
             } catch (e: SpeechException) {
                 Log.w(TAG, "Rendering article #${storyIndex + 1} failed: ${e.message}")
+            } finally {
+                articleReady()
             }
         }
     }

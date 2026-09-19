@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -78,12 +80,20 @@ private fun Player.snapshot(): NowPlaying {
 }
 
 @Composable
-private fun rememberMediaController(context: Context): MediaController? {
+private fun rememberMediaController(context: Context, onStatus: (String?) -> Unit): MediaController? {
     var controller by remember { mutableStateOf<MediaController?>(null) }
     DisposableEffect(context) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
-        future.addListener({ controller = future.get() }, ContextCompat.getMainExecutor(context))
+        val future = MediaController.Builder(context, token)
+            .setListener(object : MediaController.Listener {
+                override fun onExtrasChanged(controller: MediaController, extras: Bundle) {
+                    onStatus(extras.getString(PlaybackService.EXTRA_STATUS))
+                }
+            })
+            .buildAsync()
+        future.addListener({
+            controller = future.get().also { onStatus(it.sessionExtras.getString(PlaybackService.EXTRA_STATUS)) }
+        }, ContextCompat.getMainExecutor(context))
         onDispose {
             controller = null
             MediaController.releaseFuture(future)
@@ -100,7 +110,8 @@ fun openInBrowser(context: Context, url: String) {
 @Composable
 fun PlayerScreen(onOpenSettings: () -> Unit, onOpenSaved: () -> Unit, onOpenDebug: () -> Unit) {
     val context = LocalContext.current
-    val controller = rememberMediaController(context)
+    var status by remember { mutableStateOf<String?>(null) }
+    val controller = rememberMediaController(context) { status = it }
     var state by remember { mutableStateOf(NowPlaying()) }
     var progress by remember { mutableFloatStateOf(0f) }
     DisposableEffect(controller) {
@@ -162,6 +173,12 @@ fun PlayerScreen(onOpenSettings: () -> Unit, onOpenSaved: () -> Unit, onOpenDebu
                     "Press play here or on your headphones.\nNext skips a story, Previous reads the full article.",
                     textAlign = TextAlign.Center,
                 )
+            }
+            status?.let {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             val c = controller
             Button(
