@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.util.concurrent.TimeUnit
@@ -33,27 +34,29 @@ class ArticleExtractor(http: OkHttpClient) {
             .header("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
             .header("Accept-Language", "en-US,en;q=0.9")
             .build()
-        http.newCall(request).await().use { response ->
-            if (!response.isSuccessful) {
-                val reason = if (response.code in setOf(401, 402, 403, 451)) {
-                    FailureReason.Blocked
-                } else {
-                    FailureReason.HttpError
-                }
-                return Extraction.Failed(reason, "HTTP ${response.code}")
+        return http.fetch(request) { response -> readArticle(response) }
+    }
+
+    private suspend fun readArticle(response: Response): Extraction {
+        if (!response.isSuccessful) {
+            val reason = if (response.code in setOf(401, 402, 403, 451)) {
+                FailureReason.Blocked
+            } else {
+                FailureReason.HttpError
             }
-            val type = response.body.contentType()
-            if (type?.subtype == "pdf") return Extraction.Failed(FailureReason.Pdf)
-            if (type != null && type.subtype !in setOf("html", "xhtml+xml")) {
-                return Extraction.Failed(FailureReason.NotHtml, "$type")
-            }
-            if (response.body.contentLength() > MAX_BYTES) {
-                return Extraction.Failed(FailureReason.NotHtml, "too large")
-            }
-            val html = withContext(Dispatchers.IO) { response.body.string() }
-            val finalUrl = response.request.url.toString()
-            return withContext(Dispatchers.Default) { ArticleParser.parse(finalUrl, html) }
+            return Extraction.Failed(reason, "HTTP ${response.code}")
         }
+        val type = response.body.contentType()
+        if (type?.subtype == "pdf") return Extraction.Failed(FailureReason.Pdf)
+        if (type != null && type.subtype !in setOf("html", "xhtml+xml")) {
+            return Extraction.Failed(FailureReason.NotHtml, "$type")
+        }
+        if (response.body.contentLength() > MAX_BYTES) {
+            return Extraction.Failed(FailureReason.NotHtml, "too large")
+        }
+        val html = response.body.string()
+        val finalUrl = response.request.url.toString()
+        return withContext(Dispatchers.Default) { ArticleParser.parse(finalUrl, html) }
     }
 
     private suspend fun fetchReadme(owner: String, repo: String): Extraction? {
@@ -62,13 +65,11 @@ class ArticleExtractor(http: OkHttpClient) {
             .header("Accept", "application/vnd.github.html+json")
             .build()
         val result = try {
-            http.newCall(request).await().use { response ->
-                if (!response.isSuccessful) return null
-                val html = withContext(Dispatchers.IO) { response.body.string() }
-                ArticleParser.parseReadme("$owner/$repo", html)
+            http.fetch(request) { response ->
+                if (response.isSuccessful) ArticleParser.parseReadme("$owner/$repo", response.body.string()) else null
             }
         } catch (e: IOException) {
-            return null
+            null
         }
         return result.takeIf { it is Extraction.Article }
     }

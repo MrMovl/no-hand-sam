@@ -1,10 +1,8 @@
 package de.reibisch.hnaudio.summary
 
 import android.util.Log
-import de.reibisch.hnaudio.data.await
-import kotlinx.coroutines.Dispatchers
+import de.reibisch.hnaudio.data.fetch
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -45,9 +43,7 @@ class GeminiSummarizer(
         var attempt = 0
         while (true) {
             val (code, text) = try {
-                http.newCall(request).await().use { r ->
-                    r.code to withContext(Dispatchers.IO) { r.body.string() }
-                }
+                http.fetch(request) { r -> r.code to r.body.string() }
             } catch (e: IOException) {
                 throw SummaryException("Network error talking to Gemini: ${e.message}", e)
             }

@@ -76,9 +76,9 @@ class HnClient(
 
     private suspend fun get(url: String): String {
         val request = Request.Builder().url(url).build()
-        return http.newCall(request).await().use { response ->
+        return http.fetch(request) { response ->
             if (!response.isSuccessful) throw IOException("HTTP ${response.code} for $url")
-            withContext(Dispatchers.IO) { response.body.string() }
+            response.body.string()
         }
     }
 }
