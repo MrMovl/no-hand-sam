@@ -30,6 +30,10 @@ object VoiceCommands {
         "resume" to VoiceCommand.PLAY,
     )
 
+    /** The first phrase listed for each command, in command order, for on-screen hints. */
+    val primaryPhrases: List<String> =
+        phrases.entries.distinctBy { it.value }.sortedBy { it.value.ordinal }.map { it.key }
+
     /** Vosk grammar: the phrases plus "[unk]" so other speech doesn't get forced onto them. */
     val grammar: String = (phrases.keys + "[unk]").joinToString(",", "[", "]") { "\"$it\"" }
 

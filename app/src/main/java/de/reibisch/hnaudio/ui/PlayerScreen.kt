@@ -57,6 +57,7 @@ import de.reibisch.hnaudio.playback.articleUrl
 import de.reibisch.hnaudio.playback.kind
 import de.reibisch.hnaudio.playback.storyId
 import de.reibisch.hnaudio.voice.VoiceCommandService
+import de.reibisch.hnaudio.voice.VoiceCommands
 import de.reibisch.hnaudio.voice.VoiceModel
 import de.reibisch.hnaudio.voice.VoiceState
 import de.reibisch.hnaudio.voice.VoiceStatus
@@ -274,10 +275,22 @@ private fun VoiceToggle(voiceModel: VoiceModel, onOpenSettings: () -> Unit) {
             },
         )
     }
-    val detail = when (val s = status) {
-        is VoiceStatus.Failed -> "Voice commands stopped: ${s.message}"
-        VoiceStatus.Listening -> lastHeard?.let { "Last heard: \"$it\"" } ?: "Say \"next story\", \"read article\", \"save story\", \"pause\"…"
-        else -> null
+    val hints = buildList {
+        when (val s = status) {
+            is VoiceStatus.Failed -> add("Voice commands stopped: ${s.message}")
+            VoiceStatus.Listening -> {
+                add("Say: " + VoiceCommands.primaryPhrases.joinToString(" · "))
+                lastHeard?.let { add("Last heard: \"$it\"") }
+            }
+            else -> Unit
+        }
     }
-    detail?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    hints.forEach {
+        Text(
+            it,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
 }

@@ -35,4 +35,12 @@ class VoiceCommandsTest {
         assertNull(VoiceCommands.parse("""{"text":"[unk] next"}"""))
         assertNull(VoiceCommands.parse("not json"))
     }
+
+    @Test
+    fun `one hint phrase per command, in command order`() {
+        assertEquals(
+            listOf("next story", "previous story", "read article", "repeat", "save story", "pause", "play"),
+            VoiceCommands.primaryPhrases,
+        )
+    }
 }
